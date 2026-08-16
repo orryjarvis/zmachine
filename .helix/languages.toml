@@ -1,0 +1,15 @@
+[language-server.nixd]
+command = "nixd"
+
+[language-server.zls]
+command = "zls"
+
+[[language]]
+name = "nix"
+language-servers = ["nixd"]
+formatter = { command = "nixfmt" }
+
+[[language]]
+name = "zig"
+language-servers = ["zls"]
+formatter = { command = "zig", args = ["fmt", "--stdin"] }
