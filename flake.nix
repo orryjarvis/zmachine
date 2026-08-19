@@ -21,6 +21,8 @@
           nixfmt
 
           lldb
+
+          qemu
         ];
       };
     };

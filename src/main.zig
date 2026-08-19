@@ -1,71 +1,78 @@
 const std = @import("std");
-const Io = std.Io;
 
-const zmachine = @import("zmachine");
+pub const _start = {};
 
-pub fn main(init: std.process.Init) !void {
-    // Prints to stderr, unbuffered, ignoring potential errors.
-    std.debug.print("All your {s} are belong to us.\n", .{"codebase"});
+comptime {
+    asm (
+        \\.section .text.boot, "ax", @progbits
+        \\.globl _start
+        \\.type _start, @function
+        \\_start:
+        \\
+        \\  lla t0, __bss_start
+        \\  lla t1, __bss_end
+        \\
+        \\1:
+        \\  bgeu t0, t1, 2f
+        \\  sd zero, 0(t0)
+        \\  addi t0, t0, 8
+        \\  j 1b
+        \\
+        \\2:
+        \\  lla sp, __stack_top
+        \\  call kernelMain
+        \\
+        \\3:
+        \\  wfi
+        \\  j 3b
+        \\
+        \\.size _start, . - _start
+    );
+}
+const uart_base: usize = 0x10000000;
 
-    // This is appropriate for anything that lives as long as the process.
-    const arena: std.mem.Allocator = init.arena.allocator();
+fn uartRegister(offset: usize) *volatile u8 {
+    return @ptrFromInt(uart_base + offset);
+}
 
-    // Accessing command line arguments:
-    const args = try init.minimal.args.toSlice(arena);
-    for (args) |arg| {
-        std.log.info("arg: {s}", .{arg});
+fn writeByte(byte: u8) void {
+    // 16550 Line Status Register, bit 5:
+    // Transmitter Holding Register Empty.
+    while (uartRegister(5).* & 0x20 == 0) {}
+
+    // Offset 0 is the transmit holding register when DLAB is clear.
+    uartRegister(0).* = byte;
+}
+
+fn write(message: []const u8) void {
+    for (message) |byte| {
+        writeByte(byte);
     }
-
-    // In order to do I/O operations need an `Io` instance.
-    const io = init.io;
-
-    // Stdout is for the actual output of your application, for example if you
-    // are implementing gzip, then only the compressed bytes should be sent to
-    // stdout, not any debugging messages.
-    var stdout_buffer: [1024]u8 = undefined;
-    var stdout_file_writer: Io.File.Writer = .init(.stdout(), io, &stdout_buffer);
-    const stdout_writer = &stdout_file_writer.interface;
-
-    try zmachine.printAnotherMessage(stdout_writer);
-
-    try stdout_writer.flush(); // Don't forget to flush!
 }
 
-test "simple test" {
-    const gpa = std.testing.allocator;
-    var list: std.ArrayList(i32) = .empty;
-    defer list.deinit(gpa); // Try commenting this out and see if zig detects the memory leak!
-    try list.append(gpa, 42);
-    try std.testing.expectEqual(@as(i32, 42), list.pop());
+export fn kernelMain(hart_id: usize, dtb: usize) noreturn {
+    _ = hart_id;
+    _ = dtb;
+
+    write("hello from zmachine\r\n");
+
+    halt();
 }
 
-test "fuzz example" {
-    try std.testing.fuzz({}, testOne, .{});
+pub const panic = std.debug.FullPanic(panicImpl);
+
+fn panicImpl(message: []const u8, first_trace_addr: ?usize) noreturn {
+    _ = first_trace_addr;
+
+    write("\r\n!KERNEL PANIC!\r\n");
+    write(message);
+    write("\r\n");
+
+    halt();
 }
 
-fn testOne(context: void, smith: *std.testing.Smith) !void {
-    _ = context;
-    // Try passing `--fuzz` to `zig build test` and see if it manages to fail this test case!
-
-    const gpa = std.testing.allocator;
-    var list: std.ArrayList(u8) = .empty;
-    defer list.deinit(gpa);
-    while (!smith.eos()) switch (smith.value(enum { add_data, dup_data })) {
-        .add_data => {
-            const slice = try list.addManyAsSlice(gpa, smith.value(u4));
-            smith.bytes(slice);
-        },
-        .dup_data => {
-            if (list.items.len == 0) continue;
-            if (list.items.len > std.math.maxInt(u32)) return error.SkipZigTest;
-            const len = smith.valueRangeAtMost(u32, 1, @min(32, list.items.len));
-            const off = smith.valueRangeAtMost(u32, 0, @intCast(list.items.len - len));
-            try list.appendSlice(gpa, list.items[off..][0..len]);
-            try std.testing.expectEqualSlices(
-                u8,
-                list.items[off..][0..len],
-                list.items[list.items.len - len ..],
-            );
-        },
-    };
+fn halt() noreturn {
+    while (true) {
+        asm volatile ("wfi");
+    }
 }
