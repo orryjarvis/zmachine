@@ -1,1 +1,13 @@
-more to come...
+## TODO
+- modularize
+  - examples/hello
+  - core
+  - backend
+    - native(boot)
+    - linux
+    - windows
+  - boot(machine)
+  - machine(arch)
+  - arch
+- a PL on top?
+  - what does an app using the PL look like
